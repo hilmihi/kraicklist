@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -41,13 +42,14 @@ func handleSearch(s *Searcher) http.HandlerFunc {
 		func(w http.ResponseWriter, r *http.Request) {
 			// fetch query string from query params
 			q := r.URL.Query().Get("q")
+			filter := r.URL.Query().Get("f")
 			if len(q) == 0 {
 				w.WriteHeader(http.StatusBadRequest)
 				w.Write([]byte("missing search query in query params"))
 				return
 			}
 			// search relevant records
-			records, err := s.Search(q)
+			records, err := s.filter(q, filter)
 			if err != nil {
 				w.WriteHeader(http.StatusInternalServerError)
 				w.Write([]byte(err.Error()))
@@ -95,14 +97,166 @@ func (s *Searcher) Load(filepath string) error {
 	return nil
 }
 
-func (s *Searcher) Search(query string) ([]Record, error) {
+func (s *Searcher) SearchAll(query []string) []Record {
 	var result []Record
+
 	for _, record := range s.records {
-		if strings.Contains(record.Title, query) || strings.Contains(record.Content, query) {
+		var matches int = 0
+		isCompleteMatch := false
+		var isAllKeyExist []bool
+		for _, arr := range query {
+			if strings.Contains(strings.ToLower(record.Title), arr) || strings.Contains(strings.ToLower(record.Content), arr) {
+				isCompleteMatch = true
+				isAllKeyExist = append(isAllKeyExist, true)
+				matches += wordCount(strings.ToLower(record.Title), arr)
+				matches += wordCount(strings.ToLower(record.Content), arr)
+			} else {
+				isAllKeyExist = append(isAllKeyExist, false)
+			}
+		}
+
+		//add filter for array
+		for _, arr := range query {
+			for _, x := range record.Tags {
+				if strings.Contains(strings.ToLower(x), strings.ToLower(arr)) {
+					isCompleteMatch = true
+					matches += wordCount(strings.ToLower(strings.ToLower(x)), arr)
+				}
+			}
+		}
+
+		k, found := Find(isAllKeyExist, false)
+		if isCompleteMatch && !found && k == -1 {
+			record.Matches = matches
 			result = append(result, record)
 		}
 	}
+
+	sortRecord(result)
+	return result
+}
+
+func (s *Searcher) SearchByTitle(query []string) []Record {
+	var result []Record
+
+	for _, record := range s.records {
+		var matches int = 0
+		isCompleteMatch := false
+		for _, arr := range query {
+			if strings.Contains(strings.ToLower(record.Title), arr) {
+				matches += 1
+				isCompleteMatch = true
+			}
+		}
+
+		if isCompleteMatch {
+			record.Matches = matches
+			result = append(result, record)
+		}
+	}
+
+	sortRecord(result)
+	return result
+}
+
+func (s *Searcher) SearchByContent(query []string) []Record {
+	var result []Record
+
+	for _, record := range s.records {
+		var matches int = 0
+		isCompleteMatch := false
+		for _, arr := range query {
+			if strings.Contains(strings.ToLower(record.Content), arr) {
+				matches += 1
+				isCompleteMatch = true
+			}
+		}
+
+		if isCompleteMatch {
+			record.Matches = matches
+			result = append(result, record)
+		}
+	}
+
+	sortRecord(result)
+	return result
+}
+
+func (s *Searcher) SearchByTags(query []string) []Record {
+	var result []Record
+
+	for _, record := range s.records {
+		var matches int = 0
+		isCompleteMatch := false
+		//add filter for array tags
+		for _, arr := range query {
+			for _, x := range record.Tags {
+				if strings.Contains(strings.ToLower(x), strings.ToLower(arr)) {
+					matches += 1
+					isCompleteMatch = true
+				}
+			}
+		}
+
+		if isCompleteMatch {
+			record.Matches = matches
+			result = append(result, record)
+		}
+	}
+	sortRecord(result)
+	return result
+}
+
+func (s *Searcher) filter(query string, filter string) ([]Record, error) {
+	var result []Record
+	arrayQuery := strings.Split(strings.ToLower(query), " ")
+
+	switch filter {
+	case "Title":
+		result = s.SearchByTitle(arrayQuery)
+	case "Tags":
+		result = s.SearchByTags(arrayQuery)
+	case "Content":
+		result = s.SearchByContent(arrayQuery)
+	default:
+		result = s.SearchAll(arrayQuery)
+	}
 	return result, nil
+}
+
+func sortRecord(arr []Record) {
+	less := func(i, j int) bool {
+		// fmt.Printf("%d < %d\n", arr[i].Matches, arr[j].Matches)
+		return arr[i].Matches > arr[j].Matches
+	}
+
+	sort.Slice(arr, less)
+}
+
+func wordCount(str string, key string) int {
+	wordList := strings.Fields(str)
+	counts := make(map[string]int)
+	for _, word := range wordList {
+		_, ok := counts[word]
+		if ok {
+			counts[word] += 1
+		} else {
+			counts[word] = 1
+		}
+	}
+
+	total := counts[key]
+
+	return total
+}
+
+func Find(slice []bool, val bool) (int, bool) {
+	for i, item := range slice {
+		if item == val {
+			return i, true
+		}
+	}
+	return -1, false
 }
 
 type Record struct {
@@ -113,4 +267,5 @@ type Record struct {
 	Tags      []string `json:"tags"`
 	UpdatedAt int64    `json:"updated_at"`
 	ImageURLs []string `json:"image_urls"`
+	Matches   int      `json:"matches"`
 }

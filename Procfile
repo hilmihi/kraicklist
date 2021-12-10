@@ -1,1 +1,1 @@
-web: bin/kraicklist
+web: go run main.go

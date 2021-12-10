@@ -1,0 +1,7 @@
+version: '2'
+
+services: 
+  rider:
+    image: hilmihi/docker-kraicklist
+    ports:
+      - 3001:3001
